@@ -376,7 +376,8 @@ class OpenVzDriver(driver.ComputeDriver):
 
         # TODO(jimbobhickville) - move this stuff to OvzContainer
         self._set_hostname(container, hostname=instance['hostname'])
-        self._set_instance_size(instance)
+        # self._set_instance_size(instance)
+        container.set_flavor_settings(instance)
         self._set_onboot(container)
 
         if block_device_info:
@@ -698,8 +699,10 @@ class OpenVzDriver(driver.ComputeDriver):
         flavor spec.  If this fails an exception is raised because this
         means that the instance flavor setting couldn't be rescued.
         """
+        container = OvzContainer.find(uuid=instance['uuid'])
         try:
-            self._set_instance_size(instance)
+            # self._set_instance_size(instance)
+            container.set_flavor_settings(instance)
             if restart_instance:
                 self.reboot(instance, None, None, None, None)
             return True
@@ -748,65 +751,67 @@ class OpenVzDriver(driver.ComputeDriver):
         ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
                           '--numtcpsock', tcp_sockets, run_as_root=True)
 
-    def _set_instance_size(self, instance, network_info=None,
-                           is_migration=False):
-        """
-        Given that these parameters make up and instance's 'size' we are
-        bundling them together to make resizing an instance on the host
-        an easier task.
-        """
-        instance_size = ovz_utils.format_system_metadata(
-            instance['system_metadata'])
+    # def _set_instance_size(self, instance, network_info=None,
+    #                        is_migration=False):
+    #     """
+    #     Given that these parameters make up and instance's 'size' we are
+    #     bundling them together to make resizing an instance on the host
+    #     an easier task.
+    #     """
+    #     instance_size = ovz_utils.format_system_metadata(
+    #         instance['system_metadata'])
 
-        LOG.debug(_('Instance system metadata: %s') % instance_size)
+    #     LOG.debug(_('Instance system metadata: %s') % instance_size)
 
-        if is_migration:
-            instance_memory_mb = instance_size.get(
-                'new_instance_type_memory_mb', None)
-            if not instance_memory_mb:
-                instance_memory_mb = instance_size.get(
-                    'instance_type_memory_mb')
-            instance_vcpus = instance_size.get('new_instance_type_vcpus', None)
-            if not instance_vcpus:
-                instance_vcpus = instance_size.get('instance_type_vcpus')
-            instance_root_gb = instance_size.get(
-                'new_instance_type_root_gb', None)
-            if not instance_root_gb:
-                instance_root_gb = instance_size.get('instance_type_root_gb')
-        else:
-            instance_memory_mb = instance_size.get('instance_type_memory_mb')
-            instance_vcpus = instance_size.get('instance_type_vcpus')
-            instance_root_gb = instance_size.get('instance_type_root_gb')
+    #     if is_migration:
+    #         instance_memory_mb = instance_size.get(
+    #             'new_instance_type_memory_mb', None)
+    #         if not instance_memory_mb:
+    #             instance_memory_mb = instance_size.get(
+    #                 'instance_type_memory_mb')
 
-        instance_memory_mb = int(instance_memory_mb)
-        instance_vcpus = int(instance_vcpus)
-        instance_root_gb = int(instance_root_gb)
+    #         instance_vcpus = instance_size.get('new_instance_type_vcpus', None)
+    #         if not instance_vcpus:
+    #             instance_vcpus = instance_size.get('instance_type_vcpus')
 
-        instance_memory_bytes = ((instance_memory_mb * 1024) * 1024)
-        instance_memory_pages = self._calc_pages(instance_memory_mb)
-        percent_of_resource = self._percent_of_resource(instance_memory_mb)
+    #         instance_root_gb = instance_size.get(
+    #             'new_instance_type_root_gb', None)
+    #         if not instance_root_gb:
+    #             instance_root_gb = instance_size.get('instance_type_root_gb')
+    #     else:
+    #         instance_memory_mb = instance_size.get('instance_type_memory_mb')
+    #         instance_vcpus = instance_size.get('instance_type_vcpus')
+    #         instance_root_gb = instance_size.get('instance_type_root_gb')
 
-        memory_unit_size = int(CONF.ovz_memory_unit_size)
-        max_fd_per_unit = int(CONF.ovz_file_descriptors_per_unit)
-        max_fd = int(instance_memory_mb / memory_unit_size) * max_fd_per_unit
-        self._set_vmguarpages(instance, instance_memory_pages)
-        self._set_privvmpages(instance, instance_memory_pages)
-        self._set_kmemsize(instance, instance_memory_bytes)
-        self._set_numfiles(instance, max_fd)
-        self._set_numflock(instance, max_fd)
-        if CONF.ovz_use_cpuunit:
-            self._set_cpuunits(instance, percent_of_resource)
-        if CONF.ovz_use_cpulimit:
-            self._set_cpulimit(instance, percent_of_resource)
-        if CONF.ovz_use_cpus:
-            self._set_cpus(instance, instance_vcpus)
-        if CONF.ovz_use_ioprio:
-            self._set_ioprio(instance, instance_memory_mb)
-        if CONF.ovz_use_disk_quotas:
-            self._set_diskspace(instance, instance_root_gb)
+    #     instance_memory_mb = int(instance_memory_mb)
+    #     instance_vcpus = int(instance_vcpus)
+    #     instance_root_gb = int(instance_root_gb)
 
-        if network_info:
-            self._generate_tc_rules(instance, network_info, is_migration)
+    #     instance_memory_bytes = ((instance_memory_mb * 1024) * 1024)
+    #     instance_memory_pages = self._calc_pages(instance_memory_mb)
+    #     percent_of_resource = self._percent_of_resource(instance_memory_mb)
+
+    #     memory_unit_size = int(CONF.ovz_memory_unit_size)
+    #     max_fd_per_unit = int(CONF.ovz_file_descriptors_per_unit)
+    #     max_fd = int(instance_memory_mb / memory_unit_size) * max_fd_per_unit
+    #     self._set_vmguarpages(instance, instance_memory_pages)
+    #     self._set_privvmpages(instance, instance_memory_pages)
+    #     self._set_kmemsize(instance, instance_memory_bytes)
+    #     self._set_numfiles(instance, max_fd)
+    #     self._set_numflock(instance, max_fd)
+    #     if CONF.ovz_use_cpuunit:
+    #         self._set_cpuunits(instance, percent_of_resource)
+    #     if CONF.ovz_use_cpulimit:
+    #         self._set_cpulimit(instance, percent_of_resource)
+    #     if CONF.ovz_use_cpus:
+    #         self._set_cpus(instance, instance_vcpus)
+    #     if CONF.ovz_use_ioprio:
+    #         self._set_ioprio(instance, instance_memory_mb)
+    #     if CONF.ovz_use_disk_quotas:
+    #         self._set_diskspace(instance, instance_root_gb)
+
+    #     if network_info:
+    #         self._generate_tc_rules(instance, network_info, is_migration)
 
     def _generate_tc_rules(self, instance, network_info, is_migration=False):
         """
@@ -1790,12 +1795,15 @@ class OpenVzDriver(driver.ComputeDriver):
         # Get the instance metadata to see what we need to do
         meta = ovz_utils.read_instance_metadata(instance['id'])
         migration_type = meta.get('migration_type')
+        container = OvzContainer.find(uuid=instance['uuid'])
 
         if migration_type == 'resize_in_place':
             # This is a resize on the same host so its simple, resize
             # in place and then exit the method
             LOG.debug(_('Finishing resize-in-place for %s') % instance['uuid'])
-            self._set_instance_size(instance, network_info, False)
+            # self._set_instance_size(instance, network_info, False)
+            container.set_flavor_settings(instance, network_info, False)
+
             return
 
         if block_device_info:
@@ -1820,7 +1828,8 @@ class OpenVzDriver(driver.ComputeDriver):
         if resize_instance:
             LOG.debug(_('A resize after migration was requested: %s') %
                       instance['uuid'])
-            self._set_instance_size(instance, network_info, True)
+            # self._set_instance_size(instance, network_info, True)
+            container.set_flavor_settings(instance, network_info, True)
             LOG.debug(_('Resized instance after migration: %s') %
                       instance['uuid'])
         else:
@@ -1833,7 +1842,6 @@ class OpenVzDriver(driver.ComputeDriver):
         if not live_migration:
             self._start(instance)
 
-        container = OvzContainer.find(uuid=instance['uuid'])
         # Some data gets lost in the migration, make sure ovz has current info
         container.save_ovz_metadata()
 
@@ -1953,13 +1961,15 @@ class OpenVzDriver(driver.ComputeDriver):
         LOG.debug(_('Beginning finish_revert_migration'))
         meta = ovz_utils.read_instance_metadata(instance['id'])
         migration_type = meta.get('migration_type')
+        container = OvzContainer.find(uuid=instance['uuid'])
 
         if migration_type == 'resize_in_place':
             # This is a resize on the same host so its simple, resize
             # in place and then exit the method
             LOG.debug(_('Reverting in-place migration for %s') %
                       instance['id'])
-            self._set_instance_size(instance, network_info)
+            # self._set_instance_size(instance, network_info)
+            container.set_flavor_settings(instance, network_info)
             if ovz_utils.remove_instance_metadata_key(instance['id'],
                                                       'migration_type'):
                 LOG.debug(_('Removed migration_type metadata'))
@@ -1969,7 +1979,6 @@ class OpenVzDriver(driver.ComputeDriver):
                 LOG.debug(_('Failed to remove migration_type metadata'))
             return
 
-        container = OvzContainer.find(uuid=instance['uuid'])
         container.save_ovz_metadata()
         if block_device_info:
             LOG.debug(_('Instance %s has volumes') % instance['id'])

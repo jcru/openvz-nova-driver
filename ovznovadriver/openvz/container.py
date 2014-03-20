@@ -221,6 +221,67 @@ class OvzContainer(object):
         """
         ovz_utils.execute('vzctl', 'destroy', self.ovz_id, run_as_root=True)
 
+    def set_flavor_settings(self, instance, network_info=None,
+                            is_migration=False):
+        """
+        Sets VZ container settings based on the flavor.
+        """
+        instance_size = ovz_utils.format_system_metadata(
+            instance['system_metadata'])
+
+        LOG.debug(_('Instance system metadata: %s') % instance_size)
+
+        if is_migration:
+            instance_memory_mb = instance_size.get(
+                'new_instance_type_memory_mb', None)
+            if not instance_memory_mb:
+                instance_memory_mb = instance_size.get(
+                    'instance_type_memory_mb')
+
+            instance_vcpus = instance_size.get('new_instance_type_vcpus', None)
+            if not instance_vcpus:
+                instance_vcpus = instance_size.get('instance_type_vcpus')
+
+            instance_root_gb = instance_size.get(
+                'new_instance_type_root_gb', None)
+            if not instance_root_gb:
+                instance_root_gb = instance_size.get('instance_type_root_gb')
+        else:
+            instance_memory_mb = instance_size.get('instance_type_memory_mb')
+            instance_vcpus = instance_size.get('instance_type_vcpus')
+            instance_root_gb = instance_size.get('instance_type_root_gb')
+
+        instance_memory_mb = int(instance_memory_mb)
+        instance_vcpus = int(instance_vcpus)
+        instance_root_gb = int(instance_root_gb)
+
+        instance_memory_bytes = ((instance_memory_mb * 1024) * 1024)
+        instance_memory_pages = self._calc_pages(instance_memory_mb)
+        percent_of_resource = self._percent_of_resource(instance_memory_mb)
+
+        memory_unit_size = int(CONF.ovz_memory_unit_size)
+        max_fd_per_unit = int(CONF.ovz_file_descriptors_per_unit)
+        max_fd = int(instance_memory_mb / memory_unit_size) * max_fd_per_unit
+        self._set_vmguarpages(instance, instance_memory_pages)
+        self._set_privvmpages(instance, instance_memory_pages)
+        self._set_kmemsize(instance, instance_memory_bytes)
+        self._set_numfiles(instance, max_fd)
+        self._set_numflock(instance, max_fd)
+        if CONF.ovz_use_cpuunit:
+            self._set_cpuunits(instance, percent_of_resource)
+        if CONF.ovz_use_cpulimit:
+            self._set_cpulimit(instance, percent_of_resource)
+        if CONF.ovz_use_cpus:
+            self._set_cpus(instance, instance_vcpus)
+        if CONF.ovz_use_ioprio:
+            self._set_ioprio(instance, instance_memory_mb)
+        if CONF.ovz_use_disk_quotas:
+            self._set_diskspace(instance, instance_root_gb)
+
+        if network_info:
+            self._generate_tc_rules(instance, network_info, is_migration)
+
+
 class OvzContainers(object):
 
     @classmethod
