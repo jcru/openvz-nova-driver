@@ -710,46 +710,19 @@ class OpenVzDriver(driver.ComputeDriver):
             raise exception.InstanceUnacceptable(
                 _("Instance size reset FAILED"))
 
-    def _set_numflock(self, instance, max_file_descriptors):
-        """
-        Run the command:
+    def _get_container_settings(self, instance, network=None):
+        instance_type = self.virtapi.flavor_get(
+            context.get_admin_context(),
+            instance['instance_type_id'])
 
-        vzctl set <ctid> --save --numflock <number>
-        """
+        #TODO (jcru) change to named tuple or class
+        vz_configs = {}
 
-        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
-                          '--numflock', max_file_descriptors,
-                          run_as_root=True)
+        # Extract valid VZ settings
+        for key, value in instance_type['extra_specs'].iteritems():
+            setattr(vz_configs, key, value)
 
-    def _set_numfiles(self, instance, max_file_descriptors):
-        """
-        Run the command:
-
-        vzctl set <ctid> --save --numfile <number>
-        """
-
-        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
-                          '--numfile', max_file_descriptors,
-                          run_as_root=True)
-
-    def _set_numtcpsock(self, instance, memory_mb):
-        """
-        Run the commnand:
-
-        vzctl set <ctid> --save --numtcpsock <number>
-
-        :param instance:
-        :return:
-        """
-        try:
-            tcp_sockets = CONF.ovz_numtcpsock_map[str(memory_mb)]
-        except (ValueError, TypeError, KeyError, cfg.NoSuchOptError):
-            LOG.error(_('There was no acceptable tcpsocket number found '
-                        'defaulting to %s') % CONF.ovz_numtcpsock_default)
-            tcp_sockets = CONF.ovz_numtcpsock_default
-
-        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
-                          '--numtcpsock', tcp_sockets, run_as_root=True)
+        return vz_configs
 
     # def _set_instance_size(self, instance, network_info=None,
     #                        is_migration=False):
@@ -869,212 +842,6 @@ class OpenVzDriver(driver.ComputeDriver):
 
         with sf:
             sf.write()
-
-    def _set_vmguarpages(self, instance, num_pages):
-        """
-        Set the vmguarpages attribute for a container.  This number represents
-        the number of 4k blocks of memory that are guaranteed to the container.
-        This is what shows up when you run the command 'free' in the container.
-
-        Run the command:
-
-        vzctl set <ctid> --save --vmguarpages <num_pages>
-
-        If this fails to run then an exception is raised because this affects
-        the memory allocation for the container.
-        """
-        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
-                          '--vmguarpages', num_pages, run_as_root=True)
-
-    def _set_privvmpages(self, instance, num_pages):
-        """
-        Set the privvmpages attribute for a container.  This represents the
-        memory allocation limit.  Think of this as a bursting limit.  For now
-        We are setting to the same as vmguarpages but in the future this can be
-        used to thin provision a box.
-
-        Run the command:
-
-        vzctl set <ctid> --save --privvmpages <num_pages>
-
-        If this fails to run an exception is raised as this is essential for
-        the running container to operate properly within it's memory
-        constraints.
-        """
-        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
-                          '--privvmpages', num_pages, run_as_root=True)
-
-    def _set_kmemsize(self, instance, instance_memory):
-        """
-        Set the kmemsize attribute for a container.  This represents the
-        amount of the container's memory allocation that will be made
-        available to the kernel.  This is used for tcp connections, unix
-        sockets and the like.
-
-        This runs the command:
-
-        vzctl set <ctid> --save --kmemsize <barrier>:<limit>
-
-        If this fails to run an exception is raised as this is essential for
-        the container to operate under a normal load.  Defaults for this
-        setting are completely inadequate for any normal workload.
-        """
-
-        # Now use the configuration CONF to calculate the appropriate
-        # values for both barrier and limit.
-        kmem_limit = int(instance_memory * (
-            float(CONF.ovz_kmemsize_percent_of_memory) / 100.0))
-        kmem_barrier = int(kmem_limit * (
-            float(CONF.ovz_kmemsize_barrier_differential) / 100.0))
-        kmemsize = '%d:%d' % (kmem_barrier, kmem_limit)
-
-        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
-                          '--kmemsize', kmemsize, run_as_root=True)
-
-    def _set_cpuunits(self, instance, percent_of_resource):
-        """
-        Set the cpuunits setting for the container.  This is an integer
-        representing the number of cpu fair scheduling counters that the
-        container has access to during one complete cycle.
-
-        Run the command:
-
-        vzctl set <ctid> --save --cpuunits <units>
-
-        If this fails to run an exception is raised because this is the secret
-        sauce to constraining each container within it's subscribed slice of
-        the host node.
-        """
-        LOG.debug(_('Reported cpuunits %s') % self.MAX_CPUUNITS)
-        LOG.debug(_('Reported percent of resource: %s') % percent_of_resource)
-
-        units = int(round(self.MAX_CPUUNITS * percent_of_resource))
-
-        if units > self.MAX_CPUUNITS:
-            units = self.MAX_CPUUNITS
-
-        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
-                          '--cpuunits', units, run_as_root=True)
-
-    def _set_cpulimit(self, instance, percent_of_resource):
-        """
-        This is a number in % equal to the amount of cpu processing power
-        the container gets.  NOTE: 100% is 1 logical cpu so if you have 12
-        cores with hyperthreading enabled then 100% of the whole host machine
-        would be 2400% or --cpulimit 2400.
-
-        Run the command:
-
-        vzctl set <ctid> --save --cpulimit <cpulimit>
-
-        If this fails to run an exception is raised because this is the secret
-        sauce to constraining each container within it's subscribed slice of
-        the host node.
-        """
-
-        cpulimit = int(round(
-            (self.utility['CPULIMIT'] * percent_of_resource) *
-            CONF.ovz_cpulimit_overcommit_multiplier))
-
-        if cpulimit > self.utility['CPULIMIT']:
-            cpulimit = self.utility['CPULIMIT']
-
-        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
-                          '--cpulimit', cpulimit, run_as_root=True)
-
-    def _set_cpus(self, instance, vcpus):
-        """
-        The number of logical cpus that are made available to the container.
-        Default to showing 2 cpus to each container at a minimum.
-
-        Run the command:
-
-        vzctl set <ctid> --save --cpus <num_cpus>
-
-        If this fails to run an exception is raised because this limits the
-        number of cores that are presented to each container and if this fails
-        to set *ALL* cores will be presented to every container, that be bad.
-        """
-        vcpus = int(vcpus)
-        LOG.debug(_('VCPUs: %s') % vcpus)
-        utility_cpus = self.utility['CPULIMIT'] / 100
-
-        if vcpus > utility_cpus:
-            LOG.debug(
-                _('OpenVZ thinks vcpus "%(vcpus)s" '
-                  'is greater than "%(utility_cpus)s"') % locals())
-            # We can't set cpus higher than the number of actual logical cores
-            # on the system so set a cap here
-            vcpus = self.utility['CPULIMIT'] / 100
-
-        LOG.debug(_('VCPUs: %s') % vcpus)
-
-        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save', '--cpus',
-                          vcpus, run_as_root=True)
-
-    def _set_ioprio(self, instance, memory_mb):
-        """
-        Set the IO priority setting for a given container.  This is represented
-        by an integer between 0 and 7.
-        Run the command:
-
-        vzctl set <ctid> --save --ioprio <iopriority>
-
-        If this fails to run an exception is raised because all containers are
-        given the same weight by default which will cause bad performance
-        across all containers when there is input/output contention.
-        """
-        # The old algorithm made it impossible to distinguish between a
-        # 512MB container and a 2048MB container for IO priority.  We will
-        # for now follow a simple map to create a more non-linear
-        # relationship between the flavor sizes and their IO priority groups
-
-        # The IO priority of a container is grouped in 1 of 8 groups ranging
-        # from 0 to 7.  We can calculate an appropriate value by finding out
-        # how many ovz_memory_unit_size chunks are in the container's memory
-        # allocation and then using python's math library to solve for that
-        # number's logarithm.
-        num_chunks = int(int(memory_mb) / CONF.ovz_memory_unit_size)
-
-        try:
-            ioprio = int(round(math.log(num_chunks, 2)))
-        except ValueError:
-            ioprio = 0
-
-        if ioprio > 7:
-            # ioprio can't be higher than 7 so set a ceiling
-            ioprio = 7
-
-        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
-                          '--ioprio', ioprio, run_as_root=True)
-
-    def _set_diskspace(self, instance, root_gb):
-        """
-        Implement OpenVz disk quotas for local disk space usage.
-        This method takes a soft and hard limit.  This is also the amount
-        of diskspace that is reported by system tools such as du and df inside
-        the container.  If no argument is given then one will be calculated
-        based on the values in the instance_types table within the database.
-
-        Run the command:
-
-        vzctl set <ctid> --save --diskspace <soft_limit:hard_limit>
-
-        If this fails to run an exception is raised because this command
-        limits a container's ability to hijack all available disk space.
-        """
-
-        soft_limit = int(root_gb)
-        hard_limit = int(soft_limit * CONF.ovz_disk_space_oversub_percent)
-
-        # Now set the increment of the limit.  I do this here so that I don't
-        # have to do this in every line above.
-        soft_limit = '%s%s' % (soft_limit, CONF.ovz_disk_space_increment)
-        hard_limit = '%s%s' % (hard_limit, CONF.ovz_disk_space_increment)
-
-        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
-                          '--diskspace', '%s:%s' % (soft_limit, hard_limit),
-                          run_as_root=True)
 
     def _setup_networking(self, container, network_info):
         """
@@ -1588,35 +1355,6 @@ class OpenVzDriver(driver.ComputeDriver):
                 'mem': 0,
                 'num_cpu': 0,
                 'cpu_time': 0}
-
-    def _calc_pages(self, instance_memory, block_size=4096):
-        """
-        Returns the number of pages for a given size of storage/memory
-        """
-        return ((int(instance_memory) * 1024) * 1024) / block_size
-
-    def _percent_of_resource(self, instance_memory):
-        """
-        In order to evenly distribute resources this method will calculate a
-        multiplier based on memory consumption for the allocated container and
-        the overall host memory. This can then be applied to the cpuunits in
-        self.utility to be passed as an argument to the self._set_cpuunits
-        method to limit cpu usage of the container to an accurate percentage of
-        the host.  This is only done on self.spawn so that later, should
-        someone choose to do so, they can adjust the container's cpu usage
-        up or down.
-        """
-        cont_mem_mb = (
-            float(instance_memory) / float(ovz_utils.get_memory_mb_total()))
-
-        # We shouldn't ever have more than 100% but if for some unforseen
-        # reason we do, lets limit it to 1 to make all of the other
-        # calculations come out clean.
-        if cont_mem_mb > 1:
-            LOG.error(_('_percent_of_resource came up with more than 100%'))
-            return 1.0
-        else:
-            return cont_mem_mb
 
     def _get_cpulimit(self):
         """
