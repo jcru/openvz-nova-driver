@@ -26,6 +26,14 @@ CONF = cfg.CONF
 
 LOG = logging.getLogger(__name__)
 
+
+def generate_vz_settings_from_flavor(flavor):
+
+    settings = {}
+
+    return settings
+
+
 # More of the openvz logic belongs in here, but it was hard to de-tangle it
 # from all the libraries, so a minimal subset to get the desired outcome
 # was ported with the hope that future commits will further improve upon it
@@ -222,35 +230,53 @@ class OvzContainer(object):
         """
         ovz_utils.execute('vzctl', 'destroy', self.ovz_id, run_as_root=True)
 
+    # JCRU NEW FUNCTIONS BELOW
 
-    def _percent_of_resource(self, instance_memory):
+    def apply_config(self, config='basic'):
         """
-        In order to evenly distribute resources this method will calculate a
-        multiplier based on memory consumption for the allocated container and
-        the overall host memory. This can then be applied to the cpuunits in
-        self.utility to be passed as an argument to the self._set_cpuunits
-        method to limit cpu usage of the container to an accurate percentage of
-        the host.  This is only done on self.spawn so that later, should
-        someone choose to do so, they can adjust the container's cpu usage
-        up or down.
-        """
-        cont_mem_mb = (
-            float(instance_memory) / float(ovz_utils.get_memory_mb_total()))
+        This adds the container root into the vz meta data so that
+        OpenVz acknowledges it as a container.  Punting to a basic
+        config for now.
 
-        # We shouldn't ever have more than 100% but if for some unforseen
-        # reason we do, lets limit it to 1 to make all of the other
-        # calculations come out clean.
-        if cont_mem_mb > 1:
-            LOG.error(_('_percent_of_resource came up with more than 100%'))
-            return 1.0
-        else:
-            return cont_mem_mb
+        Run the command:
 
-    def _calc_pages(self, instance_memory, block_size=4096):
+        vzctl set <ctid> --save --applyconfig <config>
+
+        This sets the default configuration file for openvz containers.  This
+        is a requisite step in making a container from an image tarball.
+
+        If this fails to run successfully an exception is raised because the
+        container this executes against requires a base config to start.
         """
-        Returns the number of pages for a given size of storage/memory
+        ovz_utils.execute('vzctl', 'set', self.ovz_id, '--save',
+                          '--applyconfig', config, run_as_root=True)
+
+    def set_vz_os_hint(self, ostemplate='ubuntu'):
         """
-        return ((int(instance_memory) * 1024) * 1024) / block_size
+        This exists as a stopgap because currently there are no os hints
+        in the image managment of nova.  There are ways of hacking it in
+        via image_properties but this requires special case code just for
+        this driver.
+
+        Run the command:
+
+        vzctl set <ctid> --save --ostemplate <ostemplate>
+
+        Currently ostemplate defaults to ubuntu.  This facilitates setting
+        the ostemplate setting in OpenVZ to allow the OpenVz helper scripts
+        to setup networking, nameserver and hostnames.  Because of this, the
+        openvz driver only works with debian based distros.
+
+        If this fails to run an exception is raised as this is a critical piece
+        in making openvz run a container.
+        """
+
+        # This sets the distro hint for OpenVZ to later use for the setting
+        # of resolver, hostname and the like
+
+        # TODO(imsplitbit): change the ostemplate default value to a flag
+        ovz_utils.execute('vzctl', 'set', self.ovz_id, '--save',
+                          '--ostemplate', ostemplate, run_as_root=True)
 
     def _set_numflock(self, instance, max_file_descriptors):
         """
@@ -536,43 +562,45 @@ class OvzContainer(object):
         """
         Sets VZ container settings based on the flavor.
         """
-        LOG.debug(_('MARIO instance: %r') % instance)
-        instance_size = ovz_utils.format_system_metadata(
-            instance['system_metadata'])
+        # LOG.debug(_('MARIO instance: %r') % instance)
+        # instance_size = ovz_utils.format_system_metadata(
+        #     instance['system_metadata'])
 
-        LOG.debug(_('Instance system metadata: %s') % instance_size)
+        # LOG.debug(_('Instance system metadata: %s') % instance_size)
 
-        if is_migration:
-            instance_memory_mb = instance_size.get(
-                'new_instance_type_memory_mb', None)
-            if not instance_memory_mb:
-                instance_memory_mb = instance_size.get(
-                    'instance_type_memory_mb')
+        # if is_migration:
+        #     instance_memory_mb = instance_size.get(
+        #         'new_instance_type_memory_mb', None)
+        #     if not instance_memory_mb:
+        #         instance_memory_mb = instance_size.get(
+        #             'instance_type_memory_mb')
 
-            instance_vcpus = instance_size.get('new_instance_type_vcpus', None)
-            if not instance_vcpus:
-                instance_vcpus = instance_size.get('instance_type_vcpus')
+        #     instance_vcpus = instance_size.get('new_instance_type_vcpus', None)
+        #     if not instance_vcpus:
+        #         instance_vcpus = instance_size.get('instance_type_vcpus')
 
-            instance_root_gb = instance_size.get(
-                'new_instance_type_root_gb', None)
-            if not instance_root_gb:
-                instance_root_gb = instance_size.get('instance_type_root_gb')
-        else:
-            instance_memory_mb = instance_size.get('instance_type_memory_mb')
-            instance_vcpus = instance_size.get('instance_type_vcpus')
-            instance_root_gb = instance_size.get('instance_type_root_gb')
+        #     instance_root_gb = instance_size.get(
+        #         'new_instance_type_root_gb', None)
+        #     if not instance_root_gb:
+        #         instance_root_gb = instance_size.get('instance_type_root_gb')
+        # else:
+        #     instance_memory_mb = instance_size.get('instance_type_memory_mb')
+        #     instance_vcpus = instance_size.get('instance_type_vcpus')
+        #     instance_root_gb = instance_size.get('instance_type_root_gb')
 
-        instance_memory_mb = int(instance_memory_mb)
-        instance_vcpus = int(instance_vcpus)
-        instance_root_gb = int(instance_root_gb)
+        # instance_memory_mb = int(instance_memory_mb)
+        # instance_vcpus = int(instance_vcpus)
+        # instance_root_gb = int(instance_root_gb)
 
-        instance_memory_bytes = ((instance_memory_mb * 1024) * 1024)
-        instance_memory_pages = self._calc_pages(instance_memory_mb)
-        percent_of_resource = self._percent_of_resource(instance_memory_mb)
+        # instance_memory_bytes = ((instance_memory_mb * 1024) * 1024)
+        # instance_memory_pages = self._calc_pages(instance_memory_mb)
+        # percent_of_resource = self._percent_of_resource(instance_memory_mb)
 
-        memory_unit_size = int(CONF.ovz_memory_unit_size)
-        max_fd_per_unit = int(CONF.ovz_file_descriptors_per_unit)
-        max_fd = int(instance_memory_mb / memory_unit_size) * max_fd_per_unit
+        # memory_unit_size = int(CONF.ovz_memory_unit_size)
+        # max_fd_per_unit = int(CONF.ovz_file_descriptors_per_unit)
+        # max_fd = int(instance_memory_mb / memory_unit_size) * max_fd_per_unit
+
+
         self._set_vmguarpages(instance, instance_memory_pages)
         self._set_privvmpages(instance, instance_memory_pages)
         self._set_kmemsize(instance, instance_memory_bytes)
