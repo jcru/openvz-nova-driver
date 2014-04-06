@@ -113,19 +113,7 @@ openvz_conn_opts = [
     cfg.BoolOpt('ovz_vzmigrate_verbose_migration_logging',
                 default=True,
                 help='Log verbose messages from vzmigrate command'),
-    cfg.BoolOpt('ovz_use_cpuunit',
-                default=True,
-                help='Use OpenVz cpuunits for guaranteed minimums'),
-    cfg.BoolOpt('ovz_use_cpulimit',
-                default=True,
-                help='Use OpenVz cpulimit for maximum cpu limits'),
-    cfg.BoolOpt('ovz_use_cpus',
-                default=True,
-                help='Use OpenVz cpus for max cpus '
-                     'available to the container'),
-    cfg.BoolOpt('ovz_use_ioprio',
-                default=True,
-                help='Use IO fair scheduling'),
+
     cfg.BoolOpt('ovz_disk_space_oversub',
                 default=True,
                 help='Allow over subscription of local disk'),
@@ -340,7 +328,18 @@ class OpenVzDriver(driver.ComputeDriver):
         """
 
         LOG.debug(_('MARIO instance: %s') % instance)
+        LOG.debug(_('MARIO dir(instance): %s') % dir(instance))
+        LOG.debug(_('MARIO instance.system_metadata: %s') % instance['system_metadata'])
         LOG.debug(_('MARIO network_info: %s') % network_info)
+
+        instance_size = ovz_utils.format_system_metadata(
+            instance['system_metadata'])
+        LOG.debug(_('MARIO instance_size: %s') % instance_size)
+
+        # TODO (jcru) got extra_specs!
+        instance_type = self.virtapi.flavor_get(context, instance['instance_type_id'])
+        LOG.debug(_('MARIO instance_type: %s') % instance_type)
+        LOG.debug(_('MARIO instance_type.extra_specs: %s') % instance_type['extra_specs'])
         raise Exception
 
         # Update state to inform the nova stack that the VE is launching
@@ -670,7 +669,14 @@ class OpenVzDriver(driver.ComputeDriver):
             raise exception.InstanceUnacceptable(
                 _("Instance size reset FAILED"))
 
-    def _get_container_settings(self, instance, network=None):
+    def _extract_flavor_settings(self):
+        pass
+
+    def _generate_vz_settings(self, instance, network=None):
+        """Generates VZ container settings based on the flavor/instance-type,
+        configs, and calculations"""
+
+        # Get flavor info which contains extra_specs
         instance_type = self.virtapi.flavor_get(
             context.get_admin_context(),
             instance['instance_type_id'])
@@ -678,9 +684,15 @@ class OpenVzDriver(driver.ComputeDriver):
         #TODO (jcru) change to named tuple or class
         vz_configs = {}
 
-        # Extract valid VZ settings
+        # Extract valid VZ settings from flavor extra_specs
+        vz_prefix = 'vz_'
         for key, value in instance_type['extra_specs'].iteritems():
-            setattr(vz_configs, key, value)
+            key = key.lower()
+            # we are looking for extra_specs that start with vz_
+            # which signify openvz settings
+            if key.startswith(vz_prefix):
+                vz_key = key.lstrip(vz_prefix)
+                setattr(vz_configs, vz_key, value)
 
         return vz_configs
 
@@ -691,13 +703,21 @@ class OpenVzDriver(driver.ComputeDriver):
         bundling them together to make resizing an instance on the host
         an easier task.
         """
+
+        # Get instance flavor info (instance_type)
+        instance_type = self.virtapi.flavor_get(context,
+            instance['instance_type_id'])
+
         instance_size = ovz_utils.format_system_metadata(
             instance['system_metadata'])
 
         LOG.debug(_('Instance system metadata: %s') % instance_size)
 
 
-        #  DETERMINE FLAVOR INFO
+        # DETERMINE FLAVOR INFO
+        # * instance_memory_mb
+        # * instance_vcpus
+        # * instance_root_gb
         if is_migration:
             instance_memory_mb = instance_size.get(
                 'new_instance_type_memory_mb', None)
