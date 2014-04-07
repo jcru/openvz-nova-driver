@@ -45,13 +45,42 @@ class ResourceManager(object):
     """Manage OpenVz container resources
 
     Meant to be a collection of class_methods that will decide/calculate
-    resource configs."""
+    resource configs apply them through the Container class"""
 
 
-    def __init__(self):
-        pass
+    def __init__(self, virtapi):
+        """Requires virtapi (api to conductor) to get flavor info"""
+        self.virtapi = virtapi
 
-    def get_vswap_value(self, flavor_id):
+    def _get_flavor_info(self, context, flavor_id):
+        """Get the latest flavor info which contains extra_specs"""
+        # instnace_type refers to the flavor
+        return self.virtapi.flavor_get(context, flavor_id)
+
+    @classmethod
+    def setup_memory(cls, context, container, requested_flavor_id):
         """
         """
-        pass
+        instance_type = cls._get_flavor_info(context, requested_flavor_id)
+
+    @classmethod
+    def setup_cpu(cls, context, container, requested_flavor_id):
+        """
+        """
+        instance_type = cls._get_flavor_info(context, requested_flavor_id)
+
+    @classmethod
+    def setup_networking(cls, context, container, requested_flavor_id):
+        """
+        """
+        instance_type = cls._get_flavor_info(context, requested_flavor_id)
+
+
+class VswapResourceManager(object):
+    """Vswap method of managing resources"""
+    pass
+
+
+class UBCResourceManager(object):
+    """User Bean Counters method of managing resources"""
+    pass
