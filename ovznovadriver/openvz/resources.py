@@ -79,7 +79,7 @@ class VZResourceManager(object):
     def __init__(self, virtapi):
         """Requires virtapi (api to conductor) to get flavor info"""
         self.virtapi = virtapi
-        # TODO (jcru) replace dict (self.utility) with self.cpulimit
+        # TODO (jcru) replace dict (self.utility) with self.cpulimit?
         self.utility = dict()
 
     def _get_flavor_info(self, context, flavor_id):
@@ -110,7 +110,6 @@ class VZResourceManager(object):
         else:
             return cont_mem_mb
 
-    @classmethod
     def get_cpulimit(self):
         """
         Fetch the total possible cpu processing limit in percentage to be
@@ -124,7 +123,6 @@ class VZResourceManager(object):
         LOG.debug(
             _('Current cpulimit in utility: %s') % self.utility['CPULIMIT'])
 
-    @classmethod
     def get_cpuunits_usage(self):
         """
         Use openvz tools to discover the total used processing power. This is
@@ -151,28 +149,31 @@ class VZResourceManager(object):
                             self.utility[int(line[0])] = dict()
                         self.utility[int(line[0])] = int(line[1])
 
-    @classmethod
-    def configure_container_resources(cls, context, container,
+    def configure_container_resources(self, context, container,
                                       requested_flavor_id):
-        instance_type = cls._get_flavor_info(context, requested_flavor_id)
+        instance_type = self._get_flavor_info(context, requested_flavor_id)
 
-        cls._setup_memory(container, instance_type)
-        cls._setup_file_limits(container, instance_type)
-        cls._setup_cpu(container, instance_type)
-        cls._setup_io(container, instance_type)
-        cls._setup_disk_quota(container, instance_type)
+        self._setup_memory(container, instance_type)
+        self._setup_file_limits(container, instance_type)
+        self._setup_cpu(container, instance_type)
+        self._setup_io(container, instance_type)
+        self._setup_disk_quota(container, instance_type)
 
+    def configure_container_network(self, context, container,
+                                    requested_flavor_id):
 
-    def _setup_memory(cls, container, instance_type):
+        pass
+
+    def _setup_memory(self, container, instance_type):
         """
         """
         if CONF.ovz_use_ubc:
-            cls._setup_memory_with_ubc(instance_type, container)
+            self._setup_memory_with_ubc(instance_type, container)
             return
 
-        cls._setup_memory_with_vswap(container, instance_type)
+        self._setup_memory_with_vswap(container, instance_type)
 
-    def _setup_memory_with_ubc(cls, container, instance_type):
+    def _setup_memory_with_ubc(self, container, instance_type):
         instance_memory_mb = instance_type.get('memory_mb')
 
         instance_memory_bytes = ((instance_memory_mb * 1024) * 1024)
@@ -182,7 +183,7 @@ class VZResourceManager(object):
         container.set_privvmpages(instance_memory_pages)
         container.set_kmemsize(instance_memory_bytes)
 
-    def _setup_memory_with_vswap(cls, container, instance_type):
+    def _setup_memory_with_vswap(self, container, instance_type):
         memory = int(instance_type.get('memory_mb'))
         swap = instance_type.extra_specs.get('vswap', None)
 
@@ -193,7 +194,7 @@ class VZResourceManager(object):
 
         container.set_vswap(instance, memory, swap)
 
-    def _setup_file_limits(cls, container, instance_type):
+    def _setup_file_limits(self, container, instance_type):
         instance_memory_mb = int(instance_type.get('memory_mb'))
         memory_unit_size = int(CONF.ovz_memory_unit_size)
         max_fd_per_unit = int(CONF.ovz_file_descriptors_per_unit)
@@ -203,20 +204,20 @@ class VZResourceManager(object):
         container.set_numflock(max_fd)
 
     # TODO(jcru) overide caclulated values?
-    def _setup_cpu(cls, container, instance_type):
+    def _setup_cpu(self, container, instance_type):
         """
         """
         instance_memory_mb = instance_type.get('memory_mb')
-        percent_of_resource = cls._percent_of_resource(instance_memory_mb)
+        percent_of_resource = self._percent_of_resource(instance_memory_mb)
 
         if CONF.ovz_use_cpuunit:
-            LOG.debug(_('Reported cpuunits %s') % cls.MAX_CPUUNITS)
+            LOG.debug(_('Reported cpuunits %s') % self.MAX_CPUUNITS)
             LOG.debug(_('Reported percent of resource: %s') % percent_of_resource)
 
-            units = int(round(cls.MAX_CPUUNITS * percent_of_resource))
+            units = int(round(self.MAX_CPUUNITS * percent_of_resource))
 
-            if units > cls.MAX_CPUUNITS:
-                units = cls.MAX_CPUUNITS
+            if units > self.MAX_CPUUNITS:
+                units = self.MAX_CPUUNITS
 
             container.set_cpuunits(units)
 
@@ -248,7 +249,7 @@ class VZResourceManager(object):
             LOG.debug(_('VCPUs: %s') % vcpus)
             container.set_cpus(instance_vcpus)
 
-    def _setup_io(cls, container, instance_type):
+    def _setup_io(self, container, instance_type):
         if CONF.ovz_use_ioprio:
             instance_memory_mb = instance_type.get('memory_mb')
             num_chunks = int(int(instance_memory_mb) / CONF.ovz_memory_unit_size)
@@ -264,7 +265,7 @@ class VZResourceManager(object):
 
             container.set_ioprio(instance, ioprio)
 
-    def _setup_disk_quota(cls, container, instance_type):
+    def _setup_disk_quota(self, container, instance_type):
         if CONF.ovz_use_disk_quotas:
             instance_root_gb = instance_type.get('root_gb')
 
@@ -278,7 +279,7 @@ class VZResourceManager(object):
 
             container.set_diskspace(soft_limit, hard_limit)
 
-    def _setup_networking(cls, container, instance_type):
+    def _setup_networking(self, container, instance_type):
         """
         """
         pass
