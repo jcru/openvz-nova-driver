@@ -43,6 +43,21 @@ __openvz_resource_opts = [
                 default=True,
                 help='Use OpenVz Vswap memory management model instead of '
                      'User BeanCounters'),
+    cfg.IntOpt('ovz_file_descriptors_per_unit',
+               default=4096,
+               help='Max open file descriptors per memory unit'),
+    cfg.IntOpt('ovz_memory_unit_size',
+               default=512,
+               help='Unit size in MB'),
+    cfg.BoolOpt('ovz_use_disk_quotas',
+                default=True,
+                help='Use disk quotas to contain disk usage'),
+    cfg.StrOpt('ovz_disk_space_increment',
+               default='G',
+               help='Disk subscription increment'),
+    cfg.FloatOpt('ovz_disk_space_oversub_percent',
+                 default=1.10,
+                 help='Local disk over subscription percentage'),
     ]
 
 CONF = cfg.CONF
@@ -142,7 +157,10 @@ class VZResourceManager(object):
         instance_type = cls._get_flavor_info(context, requested_flavor_id)
 
         cls._setup_memory(container, instance_type)
+        cls._setup_file_limits(container, instance_type)
         cls._setup_cpu(container, instance_type)
+        cls._setup_io(container, instance_type)
+        cls._setup_disk_quota(container, instance_type)
 
 
     def _setup_memory(cls, container, instance_type):
@@ -165,7 +183,7 @@ class VZResourceManager(object):
         container.set_kmemsize(instance_memory_bytes)
 
     def _setup_memory_with_vswap(cls, container, instance_type):
-        memory = int(instance_type.memory_mb)
+        memory = int(instance_type.get('memory_mb'))
         swap = instance_type.extra_specs.get('vswap', None)
 
         # If no swap has been setup under the flavor extra specs then calculate
@@ -174,6 +192,15 @@ class VZResourceManager(object):
             swap = memory * 2
 
         container.set_vswap(instance, memory, swap)
+
+    def _setup_file_limits(cls, container, instance_type):
+        instance_memory_mb = int(instance_type.get('memory_mb'))
+        memory_unit_size = int(CONF.ovz_memory_unit_size)
+        max_fd_per_unit = int(CONF.ovz_file_descriptors_per_unit)
+        max_fd = int(instance_memory_mb / memory_unit_size) * max_fd_per_unit
+
+        container.set_numfiles(max_fd)
+        container.set_numflock(max_fd)
 
     # TODO(jcru) overide caclulated values?
     def _setup_cpu(cls, container, instance_type):
@@ -220,6 +247,36 @@ class VZResourceManager(object):
 
             LOG.debug(_('VCPUs: %s') % vcpus)
             container.set_cpus(instance_vcpus)
+
+    def _setup_io(cls, container, instance_type):
+        if CONF.ovz_use_ioprio:
+            instance_memory_mb = instance_type.get('memory_mb')
+            num_chunks = int(int(instance_memory_mb) / CONF.ovz_memory_unit_size)
+
+            try:
+                ioprio = int(round(math.log(num_chunks, 2)))
+            except ValueError:
+                ioprio = 0
+
+            if ioprio > 7:
+                # ioprio can't be higher than 7 so set a ceiling
+                ioprio = 7
+
+            container.set_ioprio(instance, ioprio)
+
+    def _setup_disk_quota(cls, container, instance_type):
+        if CONF.ovz_use_disk_quotas:
+            instance_root_gb = instance_type.get('root_gb')
+
+            soft_limit = int(instance_root_gb)
+            hard_limit = int(soft_limit * CONF.ovz_disk_space_oversub_percent)
+
+            # Now set the increment of the limit.  I do this here so that I don't
+            # have to do this in every line above.
+            soft_limit = '%s%s' % (soft_limit, CONF.ovz_disk_space_increment)
+            hard_limit = '%s%s' % (hard_limit, CONF.ovz_disk_space_increment)
+
+            container.set_diskspace(soft_limit, hard_limit)
 
     def _setup_networking(cls, container, instance_type):
         """

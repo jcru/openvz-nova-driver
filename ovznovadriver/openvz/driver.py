@@ -68,9 +68,6 @@ openvz_conn_opts = [
     cfg.StrOpt('ovz_bridge_device',
                default='br100',
                help='Bridge device to map veth devices to'),
-    cfg.StrOpt('ovz_disk_space_increment',
-               default='G',
-               help='Disk subscription increment'),
     cfg.StrOpt('ovz_vif_driver',
                default='ovznovadriver.openvz.network_drivers'
                        '.network_bridge.OVZNetworkBridgeDriver',
@@ -116,9 +113,6 @@ openvz_conn_opts = [
     cfg.BoolOpt('ovz_disk_space_oversub',
                 default=True,
                 help='Allow over subscription of local disk'),
-    cfg.BoolOpt('ovz_use_disk_quotas',
-                default=True,
-                help='Use disk quotas to contain disk usage'),
     cfg.BoolOpt('ovz_use_veth_devs',
                 default=True,
                 help='Use veth devices rather than venet'),
@@ -142,9 +136,6 @@ openvz_conn_opts = [
     cfg.IntOpt('ovz_kmemsize_barrier_differential',
                default=10,
                help='Difference of kmemsize barrier vs limit'),
-    cfg.IntOpt('ovz_memory_unit_size',
-               default=512,
-               help='Unit size in MB'),
     cfg.IntOpt('ovz_tc_id_max',
                default=9999,
                help='Max TC id to be used in generating a new id'),
@@ -154,18 +145,12 @@ openvz_conn_opts = [
     cfg.IntOpt('ovz_tc_max_line_speed',
                default=1000,
                help='Line speed in Mbit'),
-    cfg.IntOpt('ovz_file_descriptors_per_unit',
-               default=4096,
-               help='Max open file descriptors per memory unit'),
     cfg.IntOpt('ovz_rsync_iterations',
                default=1,
                help='Number of times to rsync a container when migrating'),
     cfg.IntOpt('ovz_numtcpsock_default',
                default=2000,
                help='Default number of tcp sockets to give each container'),
-    cfg.FloatOpt('ovz_disk_space_oversub_percent',
-                 default=1.10,
-                 help='Local disk over subscription percentage'),
     cfg.DictOpt('ovz_numtcpsock_map',
                 default={"8192": 3000, "1024": 2000, "4096": 2000,
                          "2048": 2000, "16384": 4000, "512": 2000},
@@ -665,9 +650,6 @@ class OpenVzDriver(driver.ComputeDriver):
             raise exception.InstanceUnacceptable(
                 _("Instance size reset FAILED"))
 
-    def _extract_flavor_settings(self):
-        pass
-
     def _generate_vz_settings(self, instance, network=None):
         """Generates VZ container settings based on the flavor/instance-type,
         configs, and calculations"""
@@ -699,11 +681,6 @@ class OpenVzDriver(driver.ComputeDriver):
         bundling them together to make resizing an instance on the host
         an easier task.
         """
-
-        # Get instance flavor info (instance_type)
-        instance_type = self.virtapi.flavor_get(context,
-            instance['instance_type_id'])
-
         instance_size = ovz_utils.format_system_metadata(
             instance['system_metadata'])
 
@@ -755,12 +732,14 @@ class OpenVzDriver(driver.ComputeDriver):
 
         # self._set_numfiles(instance, max_fd)
         # self._set_numflock(instance, max_fd)
+
         # if CONF.ovz_use_cpuunit:
         #     self._set_cpuunits(instance, percent_of_resource)
         # if CONF.ovz_use_cpulimit:
         #     self._set_cpulimit(instance, percent_of_resource)
         # if CONF.ovz_use_cpus:
         #     self._set_cpus(instance, instance_vcpus)
+
         # if CONF.ovz_use_ioprio:
         #     self._set_ioprio(instance, instance_memory_mb)
         # if CONF.ovz_use_disk_quotas:

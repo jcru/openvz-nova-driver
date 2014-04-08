@@ -230,8 +230,6 @@ class OvzContainer(object):
         """
         ovz_utils.execute('vzctl', 'destroy', self.ovz_id, run_as_root=True)
 
-    # JCRU NEW FUNCTIONS BELOW
-
     def apply_config(self, config='basic'):
         """
         This adds the container root into the vz meta data so that
@@ -278,29 +276,31 @@ class OvzContainer(object):
         ovz_utils.execute('vzctl', 'set', self.ovz_id, '--save',
                           '--ostemplate', ostemplate, run_as_root=True)
 
-    def _set_numflock(self, instance, max_file_descriptors):
+    def set_numflock(self, max_file_descriptors):
         """
         Run the command:
 
         vzctl set <ctid> --save --numflock <number>
         """
 
-        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
+        ovz_utils.execute('vzctl', 'set', self.ovz_id, '--save',
                           '--numflock', max_file_descriptors,
                           run_as_root=True)
 
-    def _set_numfiles(self, instance, max_file_descriptors):
+    def set_numfiles(self, max_file_descriptors):
         """
         Run the command:
 
         vzctl set <ctid> --save --numfile <number>
         """
 
-        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
+        ovz_utils.execute('vzctl', 'set', self.ovz_id, '--save',
                           '--numfile', max_file_descriptors,
                           run_as_root=True)
 
-    def _set_numtcpsock(self, instance, memory_mb):
+    # TODO(jcru) extract calculations from here and only pass tcp_sockets to
+    # function.
+    def set_numtcpsock(self, memory_mb):
         """
         Run the commnand:
 
@@ -316,7 +316,7 @@ class OvzContainer(object):
                         'defaulting to %s') % CONF.ovz_numtcpsock_default)
             tcp_sockets = CONF.ovz_numtcpsock_default
 
-        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
+        ovz_utils.execute('vzctl', 'set', self.ovz_id, '--save',
                           '--numtcpsock', tcp_sockets, run_as_root=True)
 
     def set_vmguarpages(self, num_pages):
@@ -436,7 +436,7 @@ class OvzContainer(object):
         ovz_utils.execute('vzctl', 'set', self.ovz_id, '--save', '--cpus',
                           vcpus, run_as_root=True)
 
-    def _set_ioprio(self, instance, memory_mb):
+    def set_ioprio(self, ioprio):
         """
         Set the IO priority setting for a given container.  This is represented
         by an integer between 0 and 7.
@@ -458,21 +458,11 @@ class OvzContainer(object):
         # how many ovz_memory_unit_size chunks are in the container's memory
         # allocation and then using python's math library to solve for that
         # number's logarithm.
-        num_chunks = int(int(memory_mb) / CONF.ovz_memory_unit_size)
 
-        try:
-            ioprio = int(round(math.log(num_chunks, 2)))
-        except ValueError:
-            ioprio = 0
-
-        if ioprio > 7:
-            # ioprio can't be higher than 7 so set a ceiling
-            ioprio = 7
-
-        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
+        ovz_utils.execute('vzctl', 'set', self.ovz_id, '--save',
                           '--ioprio', ioprio, run_as_root=True)
 
-    def _set_diskspace(self, instance, root_gb):
+    def set_diskspace(self, soft_limit, hard_limit):
         """
         Implement OpenVz disk quotas for local disk space usage.
         This method takes a soft and hard limit.  This is also the amount
@@ -488,15 +478,7 @@ class OvzContainer(object):
         limits a container's ability to hijack all available disk space.
         """
 
-        soft_limit = int(root_gb)
-        hard_limit = int(soft_limit * CONF.ovz_disk_space_oversub_percent)
-
-        # Now set the increment of the limit.  I do this here so that I don't
-        # have to do this in every line above.
-        soft_limit = '%s%s' % (soft_limit, CONF.ovz_disk_space_increment)
-        hard_limit = '%s%s' % (hard_limit, CONF.ovz_disk_space_increment)
-
-        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
+        ovz_utils.execute('vzctl', 'set', self.ovz_id, '--save',
                           '--diskspace', '%s:%s' % (soft_limit, hard_limit),
                           run_as_root=True)
 
@@ -521,76 +503,6 @@ class OvzContainer(object):
 
         ovz_utils.execute('vzctl', 'set', self.ovz_id, '--save',
                           '--ram', ram, '--swap', swap, run_as_root=True)
-
-    def _read_flavor_extra_specs(self, instance):
-        # TODO (jcru) find out if we need to extract extra_specs or comes with
-        # instance
-        instance_type = flavors.extract_flavor(instance)
-
-        extra_specs = db.flavor_extra_specs_get(ctxt, instance_type['flavorid'])
-
-    def set_flavor_settings(self, instance, network_info=None,
-                            is_migration=False):
-        """
-        Sets VZ container settings based on the flavor.
-        """
-        # LOG.debug(_('MARIO instance: %r') % instance)
-        # instance_size = ovz_utils.format_system_metadata(
-        #     instance['system_metadata'])
-
-        # LOG.debug(_('Instance system metadata: %s') % instance_size)
-
-        # if is_migration:
-        #     instance_memory_mb = instance_size.get(
-        #         'new_instance_type_memory_mb', None)
-        #     if not instance_memory_mb:
-        #         instance_memory_mb = instance_size.get(
-        #             'instance_type_memory_mb')
-
-        #     instance_vcpus = instance_size.get('new_instance_type_vcpus', None)
-        #     if not instance_vcpus:
-        #         instance_vcpus = instance_size.get('instance_type_vcpus')
-
-        #     instance_root_gb = instance_size.get(
-        #         'new_instance_type_root_gb', None)
-        #     if not instance_root_gb:
-        #         instance_root_gb = instance_size.get('instance_type_root_gb')
-        # else:
-        #     instance_memory_mb = instance_size.get('instance_type_memory_mb')
-        #     instance_vcpus = instance_size.get('instance_type_vcpus')
-        #     instance_root_gb = instance_size.get('instance_type_root_gb')
-
-        # instance_memory_mb = int(instance_memory_mb)
-        # instance_vcpus = int(instance_vcpus)
-        # instance_root_gb = int(instance_root_gb)
-
-        # instance_memory_bytes = ((instance_memory_mb * 1024) * 1024)
-        # instance_memory_pages = self._calc_pages(instance_memory_mb)
-        # percent_of_resource = self._percent_of_resource(instance_memory_mb)
-
-        # memory_unit_size = int(CONF.ovz_memory_unit_size)
-        # max_fd_per_unit = int(CONF.ovz_file_descriptors_per_unit)
-        # max_fd = int(instance_memory_mb / memory_unit_size) * max_fd_per_unit
-
-
-        self._set_vmguarpages(instance, instance_memory_pages)
-        self._set_privvmpages(instance, instance_memory_pages)
-        self._set_kmemsize(instance, instance_memory_bytes)
-        self._set_numfiles(instance, max_fd)
-        self._set_numflock(instance, max_fd)
-        if CONF.ovz_use_cpuunit:
-            self._set_cpuunits(instance, percent_of_resource)
-        if CONF.ovz_use_cpulimit:
-            self._set_cpulimit(instance, percent_of_resource)
-        if CONF.ovz_use_cpus:
-            self._set_cpus(instance, instance_vcpus)
-        if CONF.ovz_use_ioprio:
-            self._set_ioprio(instance, instance_memory_mb)
-        if CONF.ovz_use_disk_quotas:
-            self._set_diskspace(instance, instance_root_gb)
-
-        if network_info:
-            self._generate_tc_rules(instance, network_info, is_migration)
 
 
 class OvzContainers(object):
