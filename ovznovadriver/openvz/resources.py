@@ -15,6 +15,8 @@
 #    License for the specific language governing permissions and limitations
 #    under the License.
 
+from ovznovadriver.openvz import utils as ovz_utils
+
 from oslo.config import cfg
 
 from nova.openstack.common import log as logging
@@ -26,6 +28,10 @@ __openvz_resource_opts = [
     cfg.BoolOpt('ovz_use_cpulimit',
                 default=True,
                 help='Use OpenVz cpulimit for maximum cpu limits'),
+    cfg.FloatOpt('ovz_cpulimit_overcommit_multiplier',
+                 default=1.0,
+                 help='Multiplier for cpulimit to facilitate over '
+                      'committing cpu resources'),
     cfg.BoolOpt('ovz_use_cpus',
                 default=True,
                 help='Use OpenVz cpus for max cpus '
@@ -45,32 +51,98 @@ CONF.register_opts(__openvz_resource_opts)
 LOG = logging.getLogger(__name__)
 
 
-class ResourceManager(object):
+class VZResourceManager(object):
     """Manage OpenVz container resources
 
     Meant to be a collection of class_methods that will decide/calculate
     resource configs and apply them through the Container class"""
 
+    # TODO (jcru) make this a config?
+    # OpenVz sets the upper limit of cpuunits to 500000
+    MAX_CPUUNITS = 500000
 
     def __init__(self, virtapi):
         """Requires virtapi (api to conductor) to get flavor info"""
         self.virtapi = virtapi
+        # TODO (jcru) replace dict (self.utility) with self.cpulimit
+        self.utility = dict()
 
     def _get_flavor_info(self, context, flavor_id):
         """Get the latest flavor info which contains extra_specs"""
         # instnace_type refers to the flavor (what you see in flavor list)
         return self.virtapi.flavor_get(context, flavor_id)
 
+    def _percent_of_resource(self, instance_memory):
+        """
+        In order to evenly distribute resources this method will calculate a
+        multiplier based on memory consumption for the allocated container and
+        the overall host memory. This can then be applied to the cpuunits in
+        self.utility to be passed as an argument to the self._set_cpuunits
+        method to limit cpu usage of the container to an accurate percentage of
+        the host.  This is only done on self.spawn so that later, should
+        someone choose to do so, they can adjust the container's cpu usage
+        up or down.
+        """
+        cont_mem_mb = (
+            float(instance_memory) / float(ovz_utils.get_memory_mb_total()))
+
+        # We shouldn't ever have more than 100% but if for some unforseen
+        # reason we do, lets limit it to 1 to make all of the other
+        # calculations come out clean.
+        if cont_mem_mb > 1:
+            LOG.error(_('_percent_of_resource came up with more than 100%'))
+            return 1.0
+        else:
+            return cont_mem_mb
+
+    @classmethod
+    def get_cpulimit(self):
+        """
+        Fetch the total possible cpu processing limit in percentage to be
+        divided up across all containers.  This is expressed in percentage
+        being added up by logical processor.  If there are 24 logical
+        processors then the total cpulimit for the host node will be
+        2400.
+        """
+        self.utility['CPULIMIT'] = ovz_utils.get_vcpu_total() * 100
+        LOG.debug(_('Updated cpulimit in utility'))
+        LOG.debug(
+            _('Current cpulimit in utility: %s') % self.utility['CPULIMIT'])
+
+    @classmethod
+    def get_cpuunits_usage(self):
+        """
+        Use openvz tools to discover the total used processing power. This is
+        done using the vzcpucheck -v command.
+
+        Run the command:
+
+        vzcpucheck -v
+
+        If this fails to run an exception should not be raised as this is a
+        soft error and results only in the lack of knowledge of what the
+        current cpuunit usage of each container.
+        """
+        out = ovz_utils.execute(
+            'vzcpucheck', '-v', run_as_root=True, raise_on_error=False)
+        if out:
+            for line in out.splitlines():
+                line = line.split()
+                if len(line) > 0:
+                    if line[0].isdigit():
+                        LOG.debug(_('Usage for CTID %(id)s: %(usage)s') %
+                                  {'id': line[0], 'usage': line[1]})
+                        if int(line[0]) not in self.utility.keys():
+                            self.utility[int(line[0])] = dict()
+                        self.utility[int(line[0])] = int(line[1])
+
     @classmethod
     def configure_container_resources(cls, context, container,
                                       requested_flavor_id):
-        instance_type = self._get_flavor_info(context, requested_flavor_id)
+        instance_type = cls._get_flavor_info(context, requested_flavor_id)
 
-        instance_memory_mb = instance_type.get('memory_mb')
-        instance_vcpus = instance_type.get('vcpus')
-        instance_root_gb = instance_type.get('root_gb')
-
-
+        cls._setup_memory(container, instance_type)
+        cls._setup_cpu(container, instance_type)
 
 
     def _setup_memory(cls, container, instance_type):
@@ -103,10 +175,51 @@ class ResourceManager(object):
 
         container.set_vswap(instance, memory, swap)
 
+    # TODO(jcru) overide caclulated values?
     def _setup_cpu(cls, container, instance_type):
         """
         """
-        pass
+        instance_memory_mb = instance_type.get('memory_mb')
+        percent_of_resource = cls._percent_of_resource(instance_memory_mb)
+
+        if CONF.ovz_use_cpuunit:
+            LOG.debug(_('Reported cpuunits %s') % cls.MAX_CPUUNITS)
+            LOG.debug(_('Reported percent of resource: %s') % percent_of_resource)
+
+            units = int(round(cls.MAX_CPUUNITS * percent_of_resource))
+
+            if units > cls.MAX_CPUUNITS:
+                units = cls.MAX_CPUUNITS
+
+            container.set_cpuunits(units)
+
+        if CONF.ovz_use_cpulimit:
+            # self._set_cpulimit(instance, percent_of_resource)
+
+            cpulimit = int(round(
+                (self.utility['CPULIMIT'] * percent_of_resource) *
+                CONF.ovz_cpulimit_overcommit_multiplier))
+
+            if cpulimit > self.utility['CPULIMIT']:
+                cpulimit = self.utility['CPULIMIT']
+
+            container.set_cpulimit(cpulimit)
+
+        if CONF.ovz_use_cpus:
+            instance_vcpus = int(instance_type.get('vcpus'))
+            LOG.debug(_('VCPUs: %s') % vcpus)
+            utility_cpus = self.utility['CPULIMIT'] / 100
+
+            if vcpus > utility_cpus:
+                LOG.debug(
+                    _('OpenVZ thinks vcpus "%(vcpus)s" '
+                      'is greater than "%(utility_cpus)s"') % locals())
+                # We can't set cpus higher than the number of actual logical cores
+                # on the system so set a cap here
+                vcpus = self.utility['CPULIMIT'] / 100
+
+            LOG.debug(_('VCPUs: %s') % vcpus)
+            container.set_cpus(instance_vcpus)
 
     def _setup_networking(cls, container, instance_type):
         """

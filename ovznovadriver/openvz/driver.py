@@ -113,7 +113,6 @@ openvz_conn_opts = [
     cfg.BoolOpt('ovz_vzmigrate_verbose_migration_logging',
                 default=True,
                 help='Log verbose messages from vzmigrate command'),
-
     cfg.BoolOpt('ovz_disk_space_oversub',
                 default=True,
                 help='Allow over subscription of local disk'),
@@ -167,10 +166,6 @@ openvz_conn_opts = [
     cfg.FloatOpt('ovz_disk_space_oversub_percent',
                  default=1.10,
                  help='Local disk over subscription percentage'),
-    cfg.FloatOpt('ovz_cpulimit_overcommit_multiplier',
-                 default=1.0,
-                 help='Multiplier for cpulimit to facilitate over '
-                      'committing cpu resources'),
     cfg.DictOpt('ovz_numtcpsock_map',
                 default={"8192": 3000, "1024": 2000, "4096": 2000,
                          "2048": 2000, "16384": 4000, "512": 2000},
@@ -185,15 +180,14 @@ LOG = logging.getLogger('ovznovadriver.openvz.driver')
 
 
 class OpenVzDriver(driver.ComputeDriver):
-    # OpenVz sets the upper limit of cpuunits to 500000
-    MAX_CPUUNITS = 500000
 
     def __init__(self, virtapi, read_only=False):
         """
         Create an instance of the openvz connection.
         """
         super(OpenVzDriver, self).__init__(virtapi)
-        self.utility = dict()
+        # self.utility = dict()
+        self.resource_manager = VZResourceManager(virtapi)
         self.host_stats = dict()
         self._initiator = None
         self.host = None
@@ -212,7 +206,8 @@ class OpenVzDriver(driver.ComputeDriver):
             self.host = host
 
         LOG.debug(_('Determining the computing power of the host'))
-        self._get_cpulimit()
+        # self._get_cpulimit()
+        self.resource_manager.get_cpulimit()
         self._refresh_host_stats()
 
         LOG.debug(_('Flushing host TC rules if there are any'))
@@ -348,7 +343,8 @@ class OpenVzDriver(driver.ComputeDriver):
         LOG.debug(_('instance %s: is building') % instance['name'])
 
         # Get current usages and resource availablity.
-        self._get_cpuunits_usage()
+        # self._get_cpuunits_usage()
+        self.resource_manager.get_cpuunits_usage()
 
         # Go through the steps of creating a container
         # TODO(imsplitbit): Need to add conditionals around this stuff to make
@@ -1349,67 +1345,44 @@ class OpenVzDriver(driver.ComputeDriver):
         """
         return ((int(instance_memory) * 1024) * 1024) / block_size
 
-    def _percent_of_resource(self, instance_memory):
-        """
-        In order to evenly distribute resources this method will calculate a
-        multiplier based on memory consumption for the allocated container and
-        the overall host memory. This can then be applied to the cpuunits in
-        self.utility to be passed as an argument to the self._set_cpuunits
-        method to limit cpu usage of the container to an accurate percentage of
-        the host.  This is only done on self.spawn so that later, should
-        someone choose to do so, they can adjust the container's cpu usage
-        up or down.
-        """
-        cont_mem_mb = (
-            float(instance_memory) / float(ovz_utils.get_memory_mb_total()))
+    # def _get_cpulimit(self):
+    #     """
+    #     Fetch the total possible cpu processing limit in percentage to be
+    #     divided up across all containers.  This is expressed in percentage
+    #     being added up by logical processor.  If there are 24 logical
+    #     processors then the total cpulimit for the host node will be
+    #     2400.
+    #     """
+    #     self.utility['CPULIMIT'] = ovz_utils.get_vcpu_total() * 100
+    #     LOG.debug(_('Updated cpulimit in utility'))
+    #     LOG.debug(
+    #         _('Current cpulimit in utility: %s') % self.utility['CPULIMIT'])
 
-        # We shouldn't ever have more than 100% but if for some unforseen
-        # reason we do, lets limit it to 1 to make all of the other
-        # calculations come out clean.
-        if cont_mem_mb > 1:
-            LOG.error(_('_percent_of_resource came up with more than 100%'))
-            return 1.0
-        else:
-            return cont_mem_mb
+    # def _get_cpuunits_usage(self):
+    #     """
+    #     Use openvz tools to discover the total used processing power. This is
+    #     done using the vzcpucheck -v command.
 
-    def _get_cpulimit(self):
-        """
-        Fetch the total possible cpu processing limit in percentage to be
-        divided up across all containers.  This is expressed in percentage
-        being added up by logical processor.  If there are 24 logical
-        processors then the total cpulimit for the host node will be
-        2400.
-        """
-        self.utility['CPULIMIT'] = ovz_utils.get_vcpu_total() * 100
-        LOG.debug(_('Updated cpulimit in utility'))
-        LOG.debug(
-            _('Current cpulimit in utility: %s') % self.utility['CPULIMIT'])
+    #     Run the command:
 
-    def _get_cpuunits_usage(self):
-        """
-        Use openvz tools to discover the total used processing power. This is
-        done using the vzcpucheck -v command.
+    #     vzcpucheck -v
 
-        Run the command:
-
-        vzcpucheck -v
-
-        If this fails to run an exception should not be raised as this is a
-        soft error and results only in the lack of knowledge of what the
-        current cpuunit usage of each container.
-        """
-        out = ovz_utils.execute(
-            'vzcpucheck', '-v', run_as_root=True, raise_on_error=False)
-        if out:
-            for line in out.splitlines():
-                line = line.split()
-                if len(line) > 0:
-                    if line[0].isdigit():
-                        LOG.debug(_('Usage for CTID %(id)s: %(usage)s') %
-                                  {'id': line[0], 'usage': line[1]})
-                        if int(line[0]) not in self.utility.keys():
-                            self.utility[int(line[0])] = dict()
-                        self.utility[int(line[0])] = int(line[1])
+    #     If this fails to run an exception should not be raised as this is a
+    #     soft error and results only in the lack of knowledge of what the
+    #     current cpuunit usage of each container.
+    #     """
+    #     out = ovz_utils.execute(
+    #         'vzcpucheck', '-v', run_as_root=True, raise_on_error=False)
+    #     if out:
+    #         for line in out.splitlines():
+    #             line = line.split()
+    #             if len(line) > 0:
+    #                 if line[0].isdigit():
+    #                     LOG.debug(_('Usage for CTID %(id)s: %(usage)s') %
+    #                               {'id': line[0], 'usage': line[1]})
+    #                     if int(line[0]) not in self.utility.keys():
+    #                         self.utility[int(line[0])] = dict()
+    #                     self.utility[int(line[0])] = int(line[1])
 
     def get_available_resource(self, nodename):
         """Retrieve resource info.

@@ -381,8 +381,7 @@ class OvzContainer(object):
         ovz_utils.execute('vzctl', 'set', self.ovz_id, '--save',
                           '--kmemsize', kmemsize, run_as_root=True)
 
-    # TODO(jcru) CALC extract self.MAX_
-    def _set_cpuunits(self, instance, percent_of_resource):
+    def set_cpuunits(self, units):
         """
         Set the cpuunits setting for the container.  This is an integer
         representing the number of cpu fair scheduling counters that the
@@ -396,19 +395,11 @@ class OvzContainer(object):
         sauce to constraining each container within it's subscribed slice of
         the host node.
         """
-        LOG.debug(_('Reported cpuunits %s') % self.MAX_CPUUNITS)
-        LOG.debug(_('Reported percent of resource: %s') % percent_of_resource)
 
-        units = int(round(self.MAX_CPUUNITS * percent_of_resource))
-
-        if units > self.MAX_CPUUNITS:
-            units = self.MAX_CPUUNITS
-
-        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
+        ovz_utils.execute('vzctl', 'set', self.ovz_id, '--save',
                           '--cpuunits', units, run_as_root=True)
 
-    # TODO(jcru) CALC extract self.utility
-    def _set_cpulimit(self, instance, percent_of_resource):
+    def set_cpulimit(self, cpulimit):
         """
         This is a number in % equal to the amount of cpu processing power
         the container gets.  NOTE: 100% is 1 logical cpu so if you have 12
@@ -424,18 +415,11 @@ class OvzContainer(object):
         the host node.
         """
 
-        cpulimit = int(round(
-            (self.utility['CPULIMIT'] * percent_of_resource) *
-            CONF.ovz_cpulimit_overcommit_multiplier))
-
-        if cpulimit > self.utility['CPULIMIT']:
-            cpulimit = self.utility['CPULIMIT']
-
-        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
-                          '--cpulimit', cpulimit, run_as_root=True)
+        ovz_utils.execute('vzctl', 'set', self.ovz_id, '--save',
+                          '--cpulimit', cpulimit, Run_as_root=True)
 
     # TODO(jcru) CALC extract self.utility
-    def _set_cpus(self, instance, vcpus):
+    def set_cpus(self, vcpus):
         """
         The number of logical cpus that are made available to the container.
         Default to showing 2 cpus to each container at a minimum.
@@ -448,21 +432,8 @@ class OvzContainer(object):
         number of cores that are presented to each container and if this fails
         to set *ALL* cores will be presented to every container, that be bad.
         """
-        vcpus = int(vcpus)
-        LOG.debug(_('VCPUs: %s') % vcpus)
-        utility_cpus = self.utility['CPULIMIT'] / 100
 
-        if vcpus > utility_cpus:
-            LOG.debug(
-                _('OpenVZ thinks vcpus "%(vcpus)s" '
-                  'is greater than "%(utility_cpus)s"') % locals())
-            # We can't set cpus higher than the number of actual logical cores
-            # on the system so set a cap here
-            vcpus = self.utility['CPULIMIT'] / 100
-
-        LOG.debug(_('VCPUs: %s') % vcpus)
-
-        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save', '--cpus',
+        ovz_utils.execute('vzctl', 'set', self.ovz_id, '--save', '--cpus',
                           vcpus, run_as_root=True)
 
     def _set_ioprio(self, instance, memory_mb):
@@ -529,7 +500,7 @@ class OvzContainer(object):
                           '--diskspace', '%s:%s' % (soft_limit, hard_limit),
                           run_as_root=True)
 
-    def _set_vswap(self, instance, ram, swap):
+    def set_vswap(self, ram, swap):
         """
         Implement OpenVz vswap memory management model (The other being user
         beancounters).
@@ -548,7 +519,7 @@ class OvzContainer(object):
         vzctl set <ctid> --ram <physpages_limit> --swap <swappages_limit>
         """
 
-        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
+        ovz_utils.execute('vzctl', 'set', self.ovz_id, '--save',
                           '--ram', ram, '--swap', swap, run_as_root=True)
 
     def _read_flavor_extra_specs(self, instance):
