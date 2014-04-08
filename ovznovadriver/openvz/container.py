@@ -319,7 +319,7 @@ class OvzContainer(object):
         ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
                           '--numtcpsock', tcp_sockets, run_as_root=True)
 
-    def _set_vmguarpages(self, instance, num_pages):
+    def set_vmguarpages(self, num_pages):
         """
         Set the vmguarpages attribute for a container.  This number represents
         the number of 4k blocks of memory that are guaranteed to the container.
@@ -332,10 +332,10 @@ class OvzContainer(object):
         If this fails to run then an exception is raised because this affects
         the memory allocation for the container.
         """
-        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
+        ovz_utils.execute('vzctl', 'set', self.ovz_id, '--save',
                           '--vmguarpages', num_pages, run_as_root=True)
 
-    def _set_privvmpages(self, instance, num_pages):
+    def set_privvmpages(self, num_pages):
         """
         Set the privvmpages attribute for a container.  This represents the
         memory allocation limit.  Think of this as a bursting limit.  For now
@@ -350,10 +350,10 @@ class OvzContainer(object):
         the running container to operate properly within it's memory
         constraints.
         """
-        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
+        ovz_utils.execute('vzctl', 'set', self.ovz_id, '--save',
                           '--privvmpages', num_pages, run_as_root=True)
 
-    def _set_kmemsize(self, instance, instance_memory):
+    def set_kmemsize(self, instance_memory):
         """
         Set the kmemsize attribute for a container.  This represents the
         amount of the container's memory allocation that will be made
@@ -369,6 +369,7 @@ class OvzContainer(object):
         setting are completely inadequate for any normal workload.
         """
 
+        # TODO(jcru) move calculations to ResourceManager class
         # Now use the configuration CONF to calculate the appropriate
         # values for both barrier and limit.
         kmem_limit = int(instance_memory * (
@@ -377,7 +378,7 @@ class OvzContainer(object):
             float(CONF.ovz_kmemsize_barrier_differential) / 100.0))
         kmemsize = '%d:%d' % (kmem_barrier, kmem_limit)
 
-        ovz_utils.execute('vzctl', 'set', instance['uuid'], '--save',
+        ovz_utils.execute('vzctl', 'set', self.ovz_id, '--save',
                           '--kmemsize', kmemsize, run_as_root=True)
 
     # TODO(jcru) CALC extract self.MAX_

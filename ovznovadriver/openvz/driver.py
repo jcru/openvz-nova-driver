@@ -756,6 +756,7 @@ class OpenVzDriver(driver.ComputeDriver):
         # self._set_vmguarpages(instance, instance_memory_pages)
         # self._set_privvmpages(instance, instance_memory_pages)
         # self._set_kmemsize(instance, instance_memory_bytes)
+
         # self._set_numfiles(instance, max_fd)
         # self._set_numflock(instance, max_fd)
         # if CONF.ovz_use_cpuunit:
